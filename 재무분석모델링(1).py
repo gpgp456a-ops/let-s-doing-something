@@ -365,10 +365,55 @@ def get_financial_data(corp_code, bsns_year, reprt_code):   #EV와 EBITDA를 구
         print(f"데이터 처리 중 오류 발생: {e} ({bsns_year}년 {reprt_code})")
         return None
 
+def main():
+    """DART 공시 목록을 기반으로 EV/EBITDA를 계산합니다."""
+    latest_report_info = find_latest_report(corp_code)
+    if not latest_report_info: return
 
+    latest_year = latest_report_info["bsns_year"]
+    latest_code = latest_report_info["reprt_code"]
+    last_year = latest_year - 1
 
+    # EV 계산을 위한 최신 재무상태표 데이터 조회
+    latest_fs_data = get_financial_data(corp_code, latest_year, latest_code)
+    if not latest_fs_data: return
 
+    ev = market_value + latest_fs_data['nci'] + latest_fs_data['total_debt'] - latest_fs_data['cash']
+
+    if latest_code == ANNUAL_REPORT:
+        ttm_data = latest_fs_data
+    else:
+        print(f"{stock_name}의 TTM EBITDA 계산을 위해 추가 데이터를 조회합니다.")
+        # 직전 연도 연간 실적만 추가로 조회
+        last_annual_data = get_financial_data(corp_code, last_year, ANNUAL_REPORT)
+        if not last_annual_data:
+            print("{stock_name}의 TTM 계산에 필요한 데이터가 부족합니다.")
+            return
+        
+        # --- 💡 핵심 수정: TTM 계산식 변경 ---
+        ttm_data = {}
+        for key in ['ebit']:
+            # latest_fs_data에 포함된 전기(frmtrm) 값을 직접 사용
+            ttm_data[key] = (latest_fs_data[key] + 
+                             last_annual_data[key] - 
+                             latest_fs_data[f'{key}_fr']) # 작년 동기 실적
+            
+    depr = 0
+    amor = 0
+    ebitda = ttm_data['ebit'] + depr + amor
+    
+    print(f"\n--- {stock_name}의 EV/EBITDA 계산 결과 ---")
+    print(f"EV ({stock_name}의 기업가치) = {ev:,.0f} 원")
+    print(f"{stock_name}의 TTM EBITDA = {ebitda:,.0f} 원")
+    
+    if ebitda > 0:
+        ev_ebitda_ratio = ev / ebitda
+        print(f"{stock_name}의 EV/EBITDA = {ev_ebitda_ratio:.2f} 배")
+    else:
+        print("EBITDA가 0 또는 음수이므로 {stock_name}의 EV/EBITDA를 계산할 수 없습니다.")
+if __name__ == "__main__":
     main()
+
 
 
 
