@@ -143,9 +143,9 @@ res = requests.post(url, data=json.dumps(data))
 if res.status_code == 200:
     token_info = res.json()
     ACCESS_TOKEN = token_info["access_token"]
-    print("✅ 토큰 발급 성공")
+    print(" 토큰 발급 성공")
 else:
-    print("❌ 토큰 발급 실패:", res.status_code, res.text)
+    print(" 토큰 발급 실패:", res.status_code, res.text)
 
 
 
@@ -260,9 +260,7 @@ print("시가총액", market_value)
 
 
 '''연결 재무제표 가져오기'''
-import requests
-import pandas as pd
-from datetime import date, timedelta
+
 
 # --- 보고서 코드 정의 ---
 ANNUAL_REPORT = "11011"
@@ -415,4 +413,5 @@ def main():
     else:
         print("EBITDA가 0 또는 음수이므로 EV/EBITDA를 계산할 수 없습니다.")
 if __name__ == "__main__":
+
     main()
