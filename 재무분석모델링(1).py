@@ -1,5 +1,3 @@
-'''코스피주식종목코드(kospi_code.mst) 정제 파이썬 파일'''
-
 import urllib.request
 import ssl
 import zipfile
@@ -25,6 +23,8 @@ API_KEY =
 depr = 0
 amor = 0
 
+
+'''코스피주식종목코드(kospi_code.mst) 정제 파이썬 파일'''
 
 base_dir = os.getcwd()
 
@@ -415,3 +415,4 @@ def main():
 if __name__ == "__main__":
 
     main()
+
