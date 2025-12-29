@@ -29,3 +29,6 @@ jobs:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
         run: |
           python 저평가주분석.py
+
+
+          
