@@ -2,7 +2,7 @@ name: Upload df_filtered to Google Sheets
 
 on:
   schedule:
-    - cron: "0 14 * * *"   # 한국시간 23시 (UTC 14)
+    - cron: "0 11 * * *"   # 한국시간 20시 (UTC 11)
   workflow_dispatch:       # 수동 실행 버튼
 
 jobs:
