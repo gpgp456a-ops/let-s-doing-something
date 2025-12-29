@@ -20,7 +20,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pandas gspread google-auth
+          pip install pandas requests pykrx gspread gspread-dataframe google-auth
 
       - name: Run upload script
         env:
