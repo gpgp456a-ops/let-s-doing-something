@@ -1,33 +1,3 @@
-import os
-
-val = os.environ.get("SPREADSHEET_ID")
-
-if val:
-    print("SPREADSHEET_ID 길이:", len(val))
-else:
-    print("SPREADSHEET_ID 없음")
-
-
-import urllib.request
-import ssl
-import zipfile
-import os
-import pandas as pd
-import requests
-import json
-import io
-import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, date
-from pykrx import stock
-import gspread
-from google.oauth2.service_account import Credentials
-from gspread_dataframe import set_with_dataframe
-
-
-API_KEY = os.environ["API_KEY"]
-SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
-SERVICE_ACCOUNT_FILE = os.environ["SERVICE_ACCOUNT_FILE"]
-
 today = stock.get_nearest_business_day_in_a_week()
 
 # 전체 종목 리스트
@@ -75,7 +45,8 @@ def get_stock_lists():
         tickers = stock.get_market_ticker_list(market=market)
         for ticker in tickers:
             ticker_to_name[ticker] = stock.get_market_ticker_name(ticker)
-    df_all['종목명'] = df_all['티커'].map(ticker_to_name)
+    df_all['종목명'] = df_all['티커'].map(ticker_to_name) 
+    
     
     # 5. 우선주 판단 함수
     def is_preferred(ticker):
@@ -86,18 +57,20 @@ def get_stock_lists():
     remove_keywords = ["리츠", "ETF", "ETN", "스팩"]
     pattern_remove = "|".join(remove_keywords)
     df_stock_list = df_all[~df_all['티커'].apply(is_preferred)]  # 우선주 제거
-    df_stock_list = df_stock_list[~df_stock_list['종목명'].str.contains(pattern_remove)]  # 기타 제거
+    df_stock_list = df_stock_list[~df_stock_list['종목명'].str.contains(pattern_remove, na=False)] #기타 제거
+
+
+
     
-    # 7. 순수 보통주에서 ETF/리츠/ETN/스팩 제거
-    remove_keywords = ["리츠", "ETF", "ETN", "스팩"]
-    pattern_remove = "|".join(remove_keywords)
-    df_stock_list = df_stock_list[~df_stock_list['종목명'].str.contains(pattern_remove)]
     
     # 8. 보통주명을 기준으로 우선주 개수 확인
-    stock_names = df_stock_list['종목명'].tolist()
+    stock_names = df_stock_list['종목명'].unique()
     multi_preferred_names = []
+    
     for name in stock_names:
-        count = df_preferred_list['종목명'].str.contains(name).sum()
+        count = df_preferred_list['종목명'].str.contains(
+            name, na=False, regex=False
+        ).sum()
         if count >= 2:
             multi_preferred_names.append(name)
     
@@ -111,9 +84,6 @@ def get_stock_lists():
     df_stock_list = df_stock_list[cols]
     df_preferred_list = df_preferred_list[cols]
     
-    print(f"✅ 순수 보통주: {len(df_stock_list)}개, 우선주: {len(df_preferred_list)}개")
-    if multi_preferred_names:
-        print(f"🛑 우선주 2개 이상인 종목 제거: {multi_preferred_names}")
     
     return df_stock_list, df_preferred_list
 
@@ -121,6 +91,9 @@ def get_stock_lists():
 # 실행
 if __name__ == "__main__":
     df_stock_list, df_preferred_list = get_stock_lists()
+
+
+
 
 
 df_stock_list = total_sector_df.merge(
@@ -303,40 +276,6 @@ def get_financial_data(corp_code, bsns_year, reprt_code):   #EV와 EBITDA를 구
         print(f"데이터 처리 중 오류 발생: {e} ({bsns_year}년 {reprt_code})")
         return None
 
-
-def main():
-    """DART 공시 목록을 기반으로 EV/EBITDA를 계산합니다."""
-
-    latest_report_info = find_latest_report(corp_code)
-    if not latest_report_info: return
-
-    latest_year = latest_report_info["bsns_year"]
-    latest_code = latest_report_info["reprt_code"]
-    last_year = latest_year - 1
-
-
-    # EV 계산을 위한 최신 재무상태표 데이터 조회
-    latest_fs_data = get_financial_data(corp_code, latest_year, latest_code)
-
-    if latest_code == ANNUAL_REPORT:
-        ttm_data = latest_fs_data
-    else:
-        print(f"{stock_name}의 TTM EBITDA 계산을 위해 추가 데이터를 조회합니다.")
-        # 직전 연도 연간 실적만 추가로 조회
-        last_annual_data = get_financial_data(corp_code, last_year, ANNUAL_REPORT)
-        if not last_annual_data:
-            print("{stock_name}의 TTM 계산에 필요한 데이터가 부족합니다.")
-            return
-        
-        # --- 💡 핵심 수정: TTM 계산식 변경 ---
-        ttm_data = {}
-        for key in ['ebit']:
-            # latest_fs_data에 포함된 전기(frmtrm) 값을 직접 사용
-            ttm_data[key] = (latest_fs_data[key] + 
-                             last_annual_data[key] - 
-                             latest_fs_data[f'{key}_fr']) # 작년 동기 실적
-
-    ebit = ttm_data['ebit']
     
 
 def calc_ev_ebit(row):
@@ -371,7 +310,7 @@ def calc_ev_ebit(row):
     return ev / ebit
 
 
-def main(df_stock_list):
+def build_ev_ebit_table(df_stock_list):
     results = []
 
     for _, row in df_stock_list.iterrows():
@@ -389,6 +328,21 @@ def main(df_stock_list):
     df_result = pd.DataFrame(results)
     df_ev_stock_list = df_result.sort_values("EV/EBIT")
     return df_ev_stock_list
+
+
+df_ev_stock_list = build_ev_ebit_table(df_stock_list)
+
+df_stock_list = df_stock_list.merge(
+    df_ev_stock_list[['종목명','EV/EBIT']],
+    on='종목명',
+    how='right'
+)
+
+
+
+
+
+
 
 # 업종별 평균 계산
 industry_mean = (
