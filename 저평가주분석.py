@@ -471,6 +471,11 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
         print(f"데이터 처리 중 오류 발생: {e} ({bsns_year}년 {reprt_code})")
         return None
 
+
+print("EV/BBIT 및 PER 계산 완료")
+
+
+
 # ---------------- 이자보상배율 계산 ----------------
 def calc_interest_coverage(row):
     corp_code = row["corp_code"]
@@ -512,92 +517,44 @@ def calc_interest_coverage(row):
 
 
 
-# ---------------- 전체 스크리닝 ----------------
-def run_screening(df_under_price_stock_list):
-    results = []
-    print("--- 이자보상배율 계산 중 ---")
-    
-    # 슬라이스라면 복사본으로 만들어 경고 방지
-    df_under_price_stock_list = df_under_price_stock_list.copy()
-    
-    # 이자보상배율 계산
-    df_under_price_stock_list["이자보상배율"] = df_under_price_stock_list.apply(calc_interest_coverage, axis=1)
+# ---------------- 전체 스크리닝 (업종별 반복 처리로 변경) ----------------
+def run_screening(df_slice):
+    """주어진 업종 슬라이스에서 이자보상배율을 계산하고 업종 중위값 이상인 종목만 반환."""
+    if df_slice is None or df_slice.empty:
+        return pd.DataFrame(columns=df_slice.columns if df_slice is not None else [])
 
-    # 업종 평균 계산
-    industry_median_ic = (
-        df_under_price_stock_list.groupby("업종명")["이자보상배율"]
-        .median()
-        .rename("업종평균_이자보상배율")
-    )
-    
-    # 업종 평균과 병합
-    df_filtered = df_under_price_stock_list.merge(industry_median_ic, on="업종명", how="left")
-    
-    # 업종 평균 이상만 필터링 후 컬럼 제거
-    df_filtered = df_filtered[
-        df_filtered["이자보상배율"] >= df_filtered["업종평균_이자보상배율"]
-    ].drop(columns="업종평균_이자보상배율")
-    
+    df = df_slice.copy()  # 슬라이스 복사본
+    print(f"--- 이자보상배율 계산 중: 업종 '{df['업종명'].iloc[0]}' ({len(df)}종목) ---")
+
+    # 안전하게 loc 사용하여 경고 방지
+    df.loc[:, "이자보상배율"] = df.apply(calc_interest_coverage, axis=1)
+
+    # 업종 중앙값(혹은 평균) 계산 — 원래는 median 사용
+    industry_median_ic = df["이자보상배율"].median()
+
+    # 업종 평균 이상만 반환 (None/NaN 제외)
+    df_filtered = df[(df["이자보상배율"].notna()) & (df["이자보상배율"] >= industry_median_ic)].copy()
     return df_filtered
 
 
-    df_filtered_IT서비스 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == 'IT 서비스'])
-    df_filtered_건설 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '건설'])
-    df_filtered_금속 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '금속'])
-    df_filtered_금융 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '금융'])
-    df_filtered_기계장비 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '기계·장비'])
-    df_filtered_기타금융 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '기타금융'])
-    df_filtered_기타제조 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '기타제조'])
-    df_filtered_보험 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '보험'])
-    df_filtered_비금속 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '비금속'])
-    df_filtered_섬유·의류 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '섬유·의류'])
-    df_filtered_오락·문화 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '오락·문화'])
-    df_filtered_운송장비·부품 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '운송장비·부품'])
-    df_filtered_유통 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '유통'])
-    df_filtered_음식료·담배 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '음식료·담배'])
-    df_filtered_의료·정밀기기 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '의료·정밀기기'])
-    df_filtered_일반서비스 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '일반서비스'])
-    df_filtered_전기·가스 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '전기·가스'])
-    df_filtered_전기·전자 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '전기·전자'])
-    df_filtered_제약 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '제약'])
-    df_filtered_종이·목재 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '종이·목재'])
-    df_filtered_증권 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '증권'])
-    df_filtered_통신 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '통신'])
-    df_filtered_화학 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '화학'])
-    df_filtered_운송·창고 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '운송·창고'])
+# 업종 목록을 자동으로 가져와 반복 처리
+industry_list = df_under_price_stock_list['업종명'].dropna().unique()
+filtered_dfs = []
 
+print(">>> 업종별 스크리닝 시작. 업종 수:", len(industry_list))
+for ind in industry_list:
+    slice_df = df_under_price_stock_list[df_under_price_stock_list['업종명'] == ind]
+    screened = run_screening(slice_df)
+    if (screened is not None) and (not screened.empty):
+        filtered_dfs.append(screened)
 
-df_filtered = pd.concat(
-    [
-        df_filtered_IT서비스,
-        df_filtered_건설,
-        df_filtered_금속,
-        df_filtered_금융,
-        df_filtered_기계장비,
-        df_filtered_기타금융,
-        df_filtered_기타제조,
-        df_filtered_보험,
-        df_filtered_비금속,
-        df_filtered_섬유·의류,
-        df_filtered_오락·문화,
-        df_filtered_운송·창고,
-        df_filtered_운송장비·부품,
-        df_filtered_유통,
-        df_filtered_음식료·담배,
-        df_filtered_의료·정밀기기,
-        df_filtered_일반서비스,
-        df_filtered_전기·가스,
-        df_filtered_전기·전자,
-        df_filtered_제약,
-        df_filtered_종이·목재,
-        df_filtered_증권,
-        df_filtered_통신,
-        df_filtered_화학
-        
-    ],
-    axis=0
-)
+# 결과 합치기
+if filtered_dfs:
+    df_filtered = pd.concat(filtered_dfs, axis=0, ignore_index=True)
+else:
+    df_filtered = pd.DataFrame(columns=df_under_price_stock_list.columns)
 
+print(">>> 업종별 스크리닝 완료. 선정 종목 수:", len(df_filtered))
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
