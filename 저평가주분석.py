@@ -1,3 +1,30 @@
+import urllib.request
+import ssl
+import zipfile
+import os
+import pandas as pd
+import requests
+import json
+import io
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta, date
+from pykrx import stock
+import gspread
+from google.oauth2.service_account import Credentials
+from gspread_dataframe import set_with_dataframe
+
+
+API_KEY = os.environ["API_KEY"]
+SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
+service_account_json = os.environ["SERVICE_ACCOUNT_FILE"]
+
+# 실행 환경에 실제 파일로 생성
+SERVICE_ACCOUNT_FILE = "service_account.json"
+
+with open(SERVICE_ACCOUNT_FILE, "w", encoding="utf-8") as f:
+    f.write(service_account_json)
+
+
 today = stock.get_nearest_business_day_in_a_week()
 
 # 전체 종목 리스트
