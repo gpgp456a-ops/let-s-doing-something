@@ -7,6 +7,13 @@ if val:
 else:
     print("SPREADSHEET_ID 없음")
 
+
+
+
+
+
+
+
 import urllib.request
 import ssl
 import zipfile
