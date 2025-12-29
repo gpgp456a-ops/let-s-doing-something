@@ -1,0 +1,31 @@
+name: Upload df_filtered to Google Sheets2
+
+on:
+  schedule:
+    - cron: "0 11 * * *"   # 한국시간 20시 (UTC 11)
+  workflow_dispatch:       # 수동 실행 버튼
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install pandas requests pykrx gspread gspread-dataframe google-auth
+
+      - name: Run upload script
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
+          SERVICE_ACCOUNT_FILE: ${{ secrets.SERVICE_ACCOUNT_FILE }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: |
+          python 저평가주분석2.py
