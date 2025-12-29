@@ -621,3 +621,5 @@ set_with_dataframe(
     include_index=False,
     include_column_header=True
 )
+
+os.remove(SERVICE_ACCOUNT_FILE)
