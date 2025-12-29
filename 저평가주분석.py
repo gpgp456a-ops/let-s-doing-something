@@ -1,3 +1,12 @@
+import os
+
+val = os.environ.get("SPREADSHEET_ID")
+
+if val:
+    print("SPREADSHEET_ID 길이:", len(val))
+else:
+    print("SPREADSHEET_ID 없음")
+
 import urllib.request
 import ssl
 import zipfile
