@@ -23,11 +23,10 @@ import gspread
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
 
-APP_KEY = os.environ["APP_KEY"]
-APP_SECRET = os.environ["APP_SECRET"]
+
 API_KEY = os.environ["API_KEY"]
 SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
-
+SERVICE_ACCOUNT_FILE = os.environ["SERVICE_ACCOUNT_FILE"]
 
 today = stock.get_nearest_business_day_in_a_week()
 
