@@ -279,8 +279,9 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
         df_bs = df[df['sj_nm'].isin(['재무상태표', '연결재무상태표'])]
 
         
-        ebit_accounts = df_is['account_nm'].str.contains('영업이익') | \
-                       df_is['account_nm'].str.contains('영업손실')
+        ebit_accounts = df_is['account_nm'].str.contains('영업이익|영업손실', na=False) & \
+                        ~df_is['account_nm'].str.contains('계속|중단', na=False)
+        
         ebit_th = pd.to_numeric(df_is.loc[ebit_accounts, th_col]).squeeze()
         ebit_fr = pd.to_numeric(df_is.loc[ebit_accounts, fr_col]) if fr_col in df_is.columns else 0
         ebit_fr = ebit_fr.squeeze() if not isinstance(ebit_fr, int) else ebit_fr
@@ -454,7 +455,12 @@ def get_financial_data(corp_code, bsns_year, reprt_code):   #EV와 EBITDA를 구
         df_is = df[df['sj_nm'].isin(['손익계산서', '포괄손익계산서'])]
         df_cf = df[df['sj_nm'] == '현금흐름표']
         
-        ebit_th, ebit_fr = get_values(df_is, ['영업이익', '영업손실'], is_bs=False)
+        ebit_accounts = df_is['account_nm'].str.contains('영업이익|영업손실', na=False) & \
+                        ~df_it['account_nm'].str.contains('계속|중단', na=False)
+        
+        ebit_th = pd.to_numeric(df_is.loc[ebit_accounts, th_col]).squeeze()
+        ebit_fr = pd.to_numeric(df_is.loc[ebit_accounts, fr_col]) if fr_col in df_is.columns else 0
+        ebit_fr = ebit_fr.squeeze() if not isinstance(ebit_fr, int) else ebit_fr
 
 
         nci_th, _ = get_values(df_bs, ['비지배지분'], is_bs=True)
