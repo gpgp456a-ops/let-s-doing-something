@@ -14,9 +14,15 @@ from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
 
 
-API_KEY = "b64bd8a9c34de175805e36dde388870e5fbef43f"
-SPREADSHEET_ID = "1aZaWOfprdHJ4Wrd894HLJMnXsrVU4_9VuSMx8mesfYQ"
-SERVICE_ACCOUNT_FILE = "undervalued-stock-list-826e617e2843.json"
+API_KEY = os.environ["API_KEY"]
+SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
+service_account_json = os.environ["SERVICE_ACCOUNT_FILE"]
+
+# 실행 환경에 실제 파일로 생성
+SERVICE_ACCOUNT_FILE = "service_account.json"
+
+with open(SERVICE_ACCOUNT_FILE, "w", encoding="utf-8") as f:
+    f.write(service_account_json)
 
 
 today = stock.get_nearest_business_day_in_a_week()
@@ -79,12 +85,9 @@ def get_stock_lists():
     pattern_remove = "|".join(remove_keywords)
     df_stock_list = df_all[~df_all['티커'].apply(is_preferred)]  # 우선주 제거
     df_stock_list = df_stock_list[~df_stock_list['종목명'].str.contains(pattern_remove, na=False)] #기타 제거
-
-
-
     
     
-    # 8. 보통주명을 기준으로 우선주 개수 확인
+    # 7. 보통주명을 기준으로 우선주 개수 확인
     stock_names = df_stock_list['종목명'].unique()
     multi_preferred_names = []
     
@@ -95,12 +98,12 @@ def get_stock_lists():
         if count >= 2:
             multi_preferred_names.append(name)
     
-    # 9. 2개 이상 우선주 종목 제거 (보통주와 우선주 모두)
+    # 8. 2개 이상 우선주 종목 제거 (보통주와 우선주 모두)
     if multi_preferred_names:
         df_preferred_list = df_preferred_list[~df_preferred_list['종목명'].apply(lambda x: any(name in x for name in multi_preferred_names))]
         df_stock_list = df_stock_list[~df_stock_list['종목명'].isin(multi_preferred_names)]
     
-    # 10. 컬럼 정리
+    # 9. 컬럼 정리
     cols = ['시장', '티커', '종목명', 'BPS', 'PER', 'PBR', 'EPS', 'DIV', 'DPS']
     df_stock_list = df_stock_list[cols]
     df_preferred_list = df_preferred_list[cols]
@@ -116,7 +119,7 @@ if __name__ == "__main__":
 
 
 
-
+#df 병합
 df_stock_list = total_sector_df.merge(
     df_stock_list[['종목명', '티커', '시장', 'BPS', 'PER', 'PBR', 'EPS']],
     on='종목명',
@@ -195,6 +198,8 @@ df_stock_list = df_stock_list.merge(
     how='right'
 )
 
+
+
 ANNUAL_REPORT = "11011"
 Q3_REPORT = "11014"
 HALF_REPORT = "11012"
@@ -232,6 +237,181 @@ def find_latest_report(corp_code):  #가장 최근 보고서가 반기인지 분
         else: return None
     print(f"최신 보고서 확인: {bsns_year}년 {report_nm} (코드: {reprt_code})")
     return {"bsns_year": bsns_year, "reprt_code": reprt_code}
+
+
+
+
+def get_financial_data(corp_code, bsns_year, reprt_code):
+    fs_url = "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json"
+    params = {
+        "crtfc_key": API_KEY,
+        "corp_code": corp_code,
+        "bsns_year": str(bsns_year),
+        "reprt_code": reprt_code,
+        "fs_div": "CFS"
+    }
+    res = requests.get(fs_url, params=params).json()
+
+    if res.get('status') == '013':
+        print(f"({bsns_year}년 {reprt_code}) 연결재무제표가 없어 개별재무제표 조회")
+        params["fs_div"] = "OFS"
+        res = requests.get(fs_url, params=params).json()
+
+    if res.get('status') != '000':
+        print(f"API 오류: {res.get('message')} ({bsns_year}년 {reprt_code})")
+        return None
+
+    try:
+        df = pd.DataFrame(res.get("list", []))
+
+        def to_numeric(series): 
+            return pd.to_numeric(series.str.replace(',', ''), errors='coerce').fillna(0)
+        
+        if reprt_code == ANNUAL_REPORT:
+            th_col = 'thstrm_amount'
+            fr_col = 'frmtrm_amount'
+        else:
+            th_col = 'thstrm_add_amount'
+            fr_col = 'frmtrm_add_amount'
+            
+        
+        df_is = df[df['sj_nm'].isin(['손익계산서', '포괄손익계산서'])]
+        df_bs = df[df['sj_nm'].isin(['재무상태표', '연결재무상태표'])]
+
+        
+        ebit_accounts = df_is['account_nm'].str.strip().str.startswith('영업이익') | \
+                       df_is['account_nm'].str.strip().str.startswith('영업손실')
+        ebit_th = pd.to_numeric(df_is.loc[ebit_accounts, th_col]).squeeze()
+        ebit_fr = pd.to_numeric(df_is.loc[ebit_accounts, fr_col]) if fr_col in df_is.columns else 0
+        ebit_fr = ebit_fr.squeeze() if not isinstance(ebit_fr, int) else ebit_fr
+        
+        # EBT
+        ebt_accounts = df_is['account_nm'].str.strip().str.startswith('법인세', na=False) & \
+                       df_is['account_nm'].str.contains('차감전', na=False)  
+        
+        ebt_th = pd.to_numeric(df_is.loc[ebt_accounts, th_col]).squeeze()
+        ebt_fr = pd.to_numeric(df_is.loc[ebt_accounts, fr_col]) if fr_col in df_is.columns else 0
+        ebt_fr = ebt_fr.squeeze() if not isinstance(ebt_fr, int) else ebt_fr
+        
+        # EBT 제외
+        df_is = df_is.loc[~ebt_accounts].copy()
+        
+        # Tax
+        tax_accounts = df_is['account_nm'].str.contains('법인세비용') & \
+                       ~df_is['account_nm'].str.contains('기타')
+                        
+        tax_th = pd.to_numeric(df_is.loc[tax_accounts, th_col]).squeeze()
+        tax_fr = pd.to_numeric(df_is.loc[tax_accounts, fr_col]) if fr_col in df_is.columns else 0
+        tax_fr = tax_fr.squeeze() if not isinstance(tax_fr, int) else tax_fr
+        
+        # 음수 처리
+        tax_th = abs(tax_th)
+        tax_fr = abs(tax_fr)
+
+
+        tax_rate_th, tax_rate_fr = tax_th / ebt_th, tax_fr / ebt_fr
+
+        
+        keywords_dict = {
+            "inventory_th": "재고자산",
+            "accounts_receivable_th": "매출채권",
+            "accounts_payable_th": "매입채무",
+            "fixed_assets_th": "유형자산",
+            "intangible_assets_th": "무형자산"
+        }
+        
+        results = {}
+        
+        for var_name, keyword in keywords_dict.items():
+            
+            mask = df_bs['account_nm'].str.contains(keyword, na=False) & \
+                   ~df_bs['account_nm'].str.contains('감가', na=False)
+            
+            th_series = pd.to_numeric(df_bs.loc[mask, 'thstrm_amount'], errors='coerce')
+            
+            if th_series.empty:
+                results[var_name] = 0
+            else:
+                results[var_name] = th_series.sum().squeeze()  # 스칼라로 변환
+        
+        # 변수로 꺼내기
+        inventory = results["inventory_th"]
+        accounts_receivable = results["accounts_receivable_th"]
+        accounts_payable = results["accounts_payable_th"]
+        fixed_assets = results["fixed_assets_th"]
+        intangible_assets = results["intangible_assets_th"]
+
+    
+
+        data = {
+            'ebit_th': ebit_th, 'ebit_fr': ebit_fr,
+            'tax_rate_th': tax_rate_th, 'tax_rate_fr': tax_rate_fr,
+            
+            'inventory' : inventory,
+            'accounts_receivable' : accounts_receivable,
+            'accounts_payable' : accounts_payable,
+            'fixed_assets' : fixed_assets,
+            'intangible_assets' : intangible_assets
+        }
+        return data
+        
+    except Exception as e:
+        print(f"데이터 처리 중 오류 발생: {e} ({bsns_year}년 {reprt_code})")
+        return None
+
+
+
+
+def calc_roic(row):
+    results = []
+    print("--- ROIC 계산 중 ---")
+    
+    corp_code = row["corp_code"]
+
+    latest = find_latest_report(corp_code)
+    if not latest:
+        return None
+
+    latest_fs = get_financial_data(corp_code, latest["bsns_year"], latest["reprt_code"])
+    if not latest_fs:
+        return None
+
+    if latest["reprt_code"] == ANNUAL_REPORT:
+        ebit = latest_fs["ebit_th"]
+        tax_rate = latest_fs['tax_rate_th']
+        
+        inventory = latest_fs['inventory']
+        accounts_receivable = latest_fs['accounts_receivable']
+        accounts_payable = latest_fs['accounts_payable']
+        fixed_assets = latest_fs['fixed_assets']
+        intangible_assets = latest_fs['intangible_assets']
+
+        nopat = ebit * (1-tax_rate)
+        ic = inventory + accounts_receivable - accounts_payable + fixed_assets + intangible_assets
+    
+    else:
+        last_annual = get_financial_data(corp_code, latest["bsns_year"] - 1, ANNUAL_REPORT)
+        if not last_annual:
+            return None
+
+        
+        nopat = latest_fs["ebit_th"] * (1 - latest_fs["tax_rate_th"])
+        + last_annual["ebit_th"] * (1 - last_annual["tax_rate_th"]) - latest_fs["ebit_fr"] * (1 - latest_fs["tax_rate_fr"])
+        ic = latest_fs['inventory'] + latest_fs['accounts_receivable'] - latest_fs['accounts_payable'] + latest_fs['fixed_assets'] + latest_fs['intangible_assets']
+
+    
+    if nopat/ic <= 0:
+        return None
+
+    roic = nopat/ic
+    return roic
+
+# 1️⃣ ROIC 계산
+df_filtered['ROIC'] = df_stock_list.apply(calc_roic, axis=1)
+
+# 2️⃣ ROIC가 0.1 이상인 기업만 남기기
+df_stock_list = df_stock_list[df_stock_list['ROIC'] >= 0.1].reset_index(drop=True)
+
 
 
 
@@ -297,6 +477,7 @@ def get_financial_data(corp_code, bsns_year, reprt_code):   #EV와 EBITDA를 구
         print(f"데이터 처리 중 오류 발생: {e} ({bsns_year}년 {reprt_code})")
         return None
 
+
     
 
 def calc_ev_ebit(row):
@@ -324,11 +505,16 @@ def calc_ev_ebit(row):
             - latest_fs["ebit_fr"]
         )
 
-    if ebit <= 0:
-        return None
 
     ev = market_cap + latest_fs["total_debt"] - latest_fs["cash"]
+    
+    if ev/ebit <= 0:
+        return None
+    
+    
     return ev / ebit
+
+
 
 
 def build_ev_ebit_table(df_stock_list):
@@ -465,6 +651,11 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
         print(f"데이터 처리 중 오류 발생: {e} ({bsns_year}년 {reprt_code})")
         return None
 
+
+print("EV/BBIT 및 PER 계산 완료")
+
+
+
 # ---------------- 이자보상배율 계산 ----------------
 def calc_interest_coverage(row):
     corp_code = row["corp_code"]
@@ -506,78 +697,44 @@ def calc_interest_coverage(row):
 
 
 
-# ---------------- 전체 스크리닝 ----------------
-def run_screening(df_under_price_stock_list):
-    results = []
-    print("--- 이자보상배율 계산 중 ---")
-    
-    # 슬라이스라면 복사본으로 만들어 경고 방지
-    df_under_price_stock_list = df_under_price_stock_list.copy()
-    
-    # 이자보상배율 계산
-    df_under_price_stock_list["이자보상배율"] = df_under_price_stock_list.apply(calc_interest_coverage, axis=1)
+# ---------------- 전체 스크리닝 (업종별 반복 처리로 변경) ----------------
+def run_screening(df_slice):
+    """주어진 업종 슬라이스에서 이자보상배율을 계산하고 업종 중위값 이상인 종목만 반환."""
+    if df_slice is None or df_slice.empty:
+        return pd.DataFrame(columns=df_slice.columns if df_slice is not None else [])
 
-    # 업종 평균 계산
-    industry_median_ic = (
-        df_under_price_stock_list.groupby("업종명")["이자보상배율"]
-        .median()
-        .rename("업종평균_이자보상배율")
-    )
-    
-    # 업종 평균과 병합
-    df_filtered = df_under_price_stock_list.merge(industry_median_ic, on="업종명", how="left")
-    
-    # 업종 평균 이상만 필터링 후 컬럼 제거
-    df_filtered = df_filtered[
-        df_filtered["이자보상배율"] >= df_filtered["업종평균_이자보상배율"]
-    ].drop(columns="업종평균_이자보상배율")
-    
+    df = df_slice.copy()  # 슬라이스 복사본
+    print(f"--- 이자보상배율 계산 중: 업종 '{df['업종명'].iloc[0]}' ({len(df)}종목) ---")
+
+    # 안전하게 loc 사용하여 경고 방지
+    df.loc[:, "이자보상배율"] = df.apply(calc_interest_coverage, axis=1)
+
+    # 업종 중앙값(혹은 평균) 계산 — 원래는 median 사용
+    industry_median_ic = df["이자보상배율"].median()
+
+    # 업종 평균 이상만 반환 (None/NaN 제외)
+    df_filtered = df[(df["이자보상배율"].notna()) & (df["이자보상배율"] >= industry_median_ic)].copy()
     return df_filtered
 
 
-df_filtered_IT서비스 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == 'IT 서비스'])
-df_filtered_건설 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '건설'])
-df_filtered_금속 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '금속'])
-df_filtered_금융 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '금융'])
-df_filtered_기계장비 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '기계·장비'])
-df_filtered_기타금융 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '기타금융'])
-df_filtered_기타제조 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '기타제조'])
-df_filtered_보험 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '보험'])
-df_filtered_비금속 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '비금속'])
-df_filtered_섬유·의류 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '섬유·의류'])
-df_filtered_오락·문화 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '오락·문화'])
-df_filtered_운송장비·부품 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '운송장비·부품'])
-df_filtered_유통 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '유통'])
-df_filtered_음식료·담배 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '음식료·담배'])
-df_filtered_의료·정밀기기 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '의료·정밀기기'])
-df_filtered_일반서비스 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '일반서비스'])
-df_filtered_전기·가스 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '전기·가스'])
-df_filtered_전기·전자 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '전기·전자'])
-df_filtered_제약 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '제약'])
-df_filtered_종이·목재 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '종이·목재'])
-df_filtered_증권 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '증권'])
-df_filtered_통신 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '통신'])
-df_filtered_화학 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '화학'])
-df_filtered_운송·창고 = run_screening(df_under_price_stock_list[df_under_price_stock_list['업종명'] == '운송·창고'])
+# 업종 목록을 자동으로 가져와 반복 처리
+industry_list = df_under_price_stock_list['업종명'].dropna().unique()
+filtered_dfs = []
 
+print(">>> 업종별 스크리닝 시작. 업종 수:", len(industry_list))
+for ind in industry_list:
+    slice_df = df_under_price_stock_list[df_under_price_stock_list['업종명'] == ind]
+    screened = run_screening(slice_df)
+    if (screened is not None) and (not screened.empty):
+        filtered_dfs.append(screened)
 
-df_filtered = pd.concat(
-    [df_filtered_IT서비스, df_filtered_건설,df_filtered_금속,df_filtered_금융,df_filtered_기계장비, df_filtered_기타금융,df_filtered_기타제조,df_filtered_보험,df_filtered_비금속,df_filtered_섬유·의류,df_filtered_오락·문화,df_filtered_운송·창고,df_filtered_운송장비·부품,df_filtered_유통,
-        df_filtered_음식료·담배,
-        df_filtered_의료·정밀기기,
-        df_filtered_일반서비스,
-        df_filtered_전기·가스,
-        df_filtered_전기·전자,
-        df_filtered_제약,
-        df_filtered_종이·목재,
-        df_filtered_증권,
-        df_filtered_통신,
-        df_filtered_화학
-        
-    ],
-    axis=0
-)
+# 결과 합치기
+if filtered_dfs:
+    df_filtered = pd.concat(filtered_dfs, axis=0, ignore_index=True)
+else:
+    df_filtered = pd.DataFrame(columns=df_under_price_stock_list.columns)
 
+print(">>> 업종별 스크리닝 완료. 선정 종목 수:", len(df_filtered))
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
