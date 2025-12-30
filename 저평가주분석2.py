@@ -279,8 +279,8 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
         df_bs = df[df['sj_nm'].isin(['재무상태표', '연결재무상태표'])]
 
         
-        ebit_accounts = df_is['account_nm'].str.strip().str.startswith('영업이익') | \
-                       df_is['account_nm'].str.strip().str.startswith('영업손실')
+        ebit_accounts = df_is['account_nm'].str.contains('영업이익') | \
+                       df_is['account_nm'].str.contains('영업손실')
         ebit_th = pd.to_numeric(df_is.loc[ebit_accounts, th_col]).squeeze()
         ebit_fr = pd.to_numeric(df_is.loc[ebit_accounts, fr_col]) if fr_col in df_is.columns else 0
         ebit_fr = ebit_fr.squeeze() if not isinstance(ebit_fr, int) else ebit_fr
