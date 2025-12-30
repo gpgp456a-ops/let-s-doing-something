@@ -330,11 +330,16 @@ def calc_ev_ebit(row):
             - latest_fs["ebit_fr"]
         )
 
-    if ebit <= 0:
-        return None
 
     ev = market_cap + latest_fs["total_debt"] - latest_fs["cash"]
+    
+    if ev/ebit <= 0:
+        return None
+    
+    
     return ev / ebit
+
+
 
 
 def build_ev_ebit_table(df_stock_list):
