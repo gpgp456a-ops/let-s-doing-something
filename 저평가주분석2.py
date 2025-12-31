@@ -12,6 +12,7 @@ from pykrx import stock
 import gspread
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
+import numpy as np
 
 
 API_KEY = os.environ["API_KEY"]
