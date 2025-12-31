@@ -500,11 +500,10 @@ def calc_ROIC_and_EV_EBIT_and_interest_coverage(row):
 
     
     return pd.Series({
-        "ROIC": roic,
-        "EV_EBIT": ev_ebit,
-        "이자보상배율" : interest_coverage
+    "ROIC": roic if np.isfinite(roic) else np.nan,
+    "EV_EBIT": ev_ebit if np.isfinite(ev_ebit) else np.nan,
+    "이자보상배율": interest_coverage if np.isfinite(interest_coverage) else np.nan
     })
-
     
 
 
@@ -544,6 +543,13 @@ for i in range(0, len(df_stock_list), BATCH_SIZE):
     if i + BATCH_SIZE < len(df_stock_list):
         print("⏸ DART 보호용 휴식...")
         time.sleep(SLEEP_PER_BATCH)
+
+
+
+df_stock_list['ROIC'] = roic_list
+df_stock_list['EV_EBIT'] = ev_ebit_list
+df_stock_list['이자보상배율'] = interest_coverage_list
+
 
 
 
