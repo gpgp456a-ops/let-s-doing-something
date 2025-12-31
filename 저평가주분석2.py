@@ -288,7 +288,7 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
         ebit_fr = ebit_fr.squeeze() if not isinstance(ebit_fr, int) else ebit_fr
         
         # EBT
-        ebt_accounts = df_is['account_nm'].str.strip().str.startswith('법인세', na=False) & \
+        ebt_accounts = df_is['account_nm'].str.contains('법인세', na=False) & \
                        df_is['account_nm'].str.contains('차감전', na=False)  
         
         ebt_th = pd.to_numeric(df_is.loc[ebt_accounts, th_col]).squeeze()
@@ -333,9 +333,10 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
             
             if th_series.empty:
                 results[var_name] = 0
+
             else:
                 results[var_name] = th_series.sum().squeeze()  # 스칼라로 변환
-        
+
         # 변수로 꺼내기
         inventory = results["inventory_th"]
         accounts_receivable = results["accounts_receivable_th"]
@@ -395,10 +396,12 @@ def calc_roic(row):
         last_annual = get_financial_data(corp_code, latest["bsns_year"] - 1, ANNUAL_REPORT)
         if not last_annual:
             return None
-
-        print("어디가 문제인가", latest_fs["ebit_th"], (1 - latest_fs["tax_rate_th"]), latest_fs['inventory'])
-        nopat = latest_fs["ebit_th"] * (1 - latest_fs["tax_rate_th"])
-        + last_annual["ebit_th"] * (1 - last_annual["tax_rate_th"]) - latest_fs["ebit_fr"] * (1 - latest_fs["tax_rate_fr"])
+        
+        nopat = (
+            latest_fs["ebit_th"] * (1 - latest_fs["tax_rate_th"])
+            + last_annual["ebit_th"] * (1 - last_annual["tax_rate_th"])
+            - latest_fs["ebit_fr"] * (1 - latest_fs["tax_rate_fr"])
+        )
         ic = latest_fs['inventory'] + latest_fs['accounts_receivable'] - latest_fs['accounts_payable'] + latest_fs['fixed_assets'] + latest_fs['intangible_assets']
 
     
@@ -407,7 +410,6 @@ def calc_roic(row):
 
     roic = nopat/ic
     
-    print(df_stock_list[df_stock_list['corp_code'] == corp_code])
     return roic
 
 
