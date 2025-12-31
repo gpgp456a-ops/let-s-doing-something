@@ -223,6 +223,7 @@ def find_latest_report(corp_code):  #가장 최근 보고서가 반기인지 분
     if not reports:
         print("최근 정기보고서를 찾을 수 없습니다.")
         return None
+        
     latest_report = reports[0]
     report_nm = latest_report['report_nm']
     reception_year = int(latest_report['rcept_dt'][:4])
@@ -265,8 +266,6 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
     try:
         df = pd.DataFrame(res.get("list", []))
 
-        def to_numeric(series): 
-            return pd.to_numeric(series.str.replace(',', ''), errors='coerce').fillna(0)
         
         if reprt_code == ANNUAL_REPORT:
             th_col = 'thstrm_amount'
@@ -275,13 +274,16 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
             th_col = 'thstrm_add_amount'
             fr_col = 'frmtrm_add_amount'
             
+
+        ################################################ROIC 계산에 필요한 정보 가져오는 부분#################################################
         
         df_is = df[df['sj_nm'].isin(['손익계산서', '포괄손익계산서'])]
         df_bs = df[df['sj_nm'].isin(['재무상태표', '연결재무상태표'])]
+        df_cf = df[df['sj_div'] == 'CF']
 
         
         ebit_accounts = df_is['account_nm'].str.contains('영업이익|영업손실|영업손익', na=False) & \
-                                ~df_is['account_nm'].str.contains('계속|중단', na=False)
+                                ~df_is['account_nm'].str.contains('계속|중단|기타', na=False)
 
 
         ebit_th = pd.to_numeric(df_is.loc[ebit_accounts, th_col]).squeeze()
@@ -303,9 +305,15 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
         tax_accounts = df_is['account_nm'].str.contains('법인세비용') & \
                        ~df_is['account_nm'].str.contains('기타')
                         
-        tax_th = pd.to_numeric(df_is.loc[tax_accounts, th_col]).squeeze()
-        tax_fr = pd.to_numeric(df_is.loc[tax_accounts, fr_col]) if fr_col in df_is.columns else 0
-        tax_fr = tax_fr.squeeze() if not isinstance(tax_fr, int) else tax_fr
+        tax_th = pd.to_numeric(
+            df_is.loc[tax_accounts, th_col],
+            errors="coerce"
+        ).sum()
+        
+        tax_fr = (
+            pd.to_numeric(df_is.loc[tax_accounts, fr_col], errors="coerce").sum()
+            if fr_col in df_is.columns else 0
+        )
         
         # 음수 처리
         tax_th = abs(tax_th)
@@ -345,8 +353,48 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
         fixed_assets = results["fixed_assets_th"]
         intangible_assets = results["intangible_assets_th"]
 
-    
+        #########################################################EV/EBIT 계산에 필요한 정보 가져오는 부분 ###########################################
 
+
+
+                
+        nci_th = pd.to_numeric(
+            df_bs.loc[df_bs['account_nm'].str.contains('비지배지분', na=False), 'thstrm_amount'],
+            errors='coerce'
+        ).sum()  # 없으면 sum()은 0을 반환
+        
+        debt_th = pd.to_numeric(
+            df_bs.loc[df_bs['account_nm'].str.contains('부채총계', na=False), 'thstrm_amount'],
+            errors='coerce'
+        ).sum()
+        
+        cash_th = pd.to_numeric(
+            df_bs.loc[df_bs['account_nm'].str.contains('현금', na=False), 'thstrm_amount'],
+            errors='coerce'
+        ).sum()
+        
+        st_fin_th = pd.to_numeric(
+            df_bs.loc[df_bs['account_nm'].str.contains('단기금융', na=False), 'thstrm_amount'],
+            errors='coerce'
+        ).sum()
+
+        ######################################################이자보상배율 계산에 필요한 정보 가져오는 부분############################################
+
+        interest_th = pd.to_numeric(
+            df_cf.loc[
+                df_cf["account_nm"].str.contains("이자", na=False)
+                & df_cf["account_nm"].str.contains("지급", na=False),
+                "thstrm_amount"
+            ],
+            errors="coerce"
+        ).sum()
+
+        interest_th = abs(interest_th)
+
+
+
+        ################################################################가져 온 정보 넘기기 ####################################################
+        
         data = {
             'ebit_th': ebit_th, 'ebit_fr': ebit_fr,
             'tax_rate_th': tax_rate_th, 'tax_rate_fr': tax_rate_fr,
@@ -355,412 +403,223 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
             'accounts_receivable' : accounts_receivable,
             'accounts_payable' : accounts_payable,
             'fixed_assets' : fixed_assets,
-            'intangible_assets' : intangible_assets
-        }
-        return data
-        
-    except Exception as e:
-        print(f"데이터 처리 중 오류 발생: {e} ({bsns_year}년 {reprt_code})")
-        return None
-
-
-
-
-def calc_roic(row):
-    results = []
-    print("--- ROIC 계산 중 ---")
-    
-    corp_code = row["corp_code"]
-
-    latest = find_latest_report(corp_code)
-    if not latest:
-        return None
-
-    latest_fs = get_financial_data(corp_code, latest["bsns_year"], latest["reprt_code"])
-    if not latest_fs:
-        return None
-
-    if latest["reprt_code"] == ANNUAL_REPORT:
-        ebit = latest_fs["ebit_th"]
-        tax_rate = latest_fs['tax_rate_th']
-        
-        inventory = latest_fs['inventory']
-        accounts_receivable = latest_fs['accounts_receivable']
-        accounts_payable = latest_fs['accounts_payable']
-        fixed_assets = latest_fs['fixed_assets']
-        intangible_assets = latest_fs['intangible_assets']
-
-        nopat = ebit * (1-tax_rate)
-        ic = inventory + accounts_receivable - accounts_payable + fixed_assets + intangible_assets
-    
-    else:
-        last_annual = get_financial_data(corp_code, latest["bsns_year"] - 1, ANNUAL_REPORT)
-        if not last_annual:
-            return None
-        
-        nopat = (
-            latest_fs["ebit_th"] * (1 - latest_fs["tax_rate_th"])
-            + last_annual["ebit_th"] * (1 - last_annual["tax_rate_th"])
-            - latest_fs["ebit_fr"] * (1 - latest_fs["tax_rate_fr"])
-        )
-        ic = latest_fs['inventory'] + latest_fs['accounts_receivable'] - latest_fs['accounts_payable'] + latest_fs['fixed_assets'] + latest_fs['intangible_assets']
-
-    
-    if nopat/ic <= 0:
-        return None
-
-    roic = nopat/ic
-    
-    return roic
-
-
-# 1️⃣ ROIC 계산
-df_filtered['ROIC'] = df_stock_list.apply(calc_roic, axis=1)
-
-# 2️⃣ ROIC가 0.1 이상인 기업만 남기기
-df_stock_list = df_stock_list[df_stock_list['ROIC'] >= 0.1].reset_index(drop=True)
-
-
-
-
-
-def get_financial_data(corp_code, bsns_year, reprt_code):   #EV와 EBITDA를 구하는데 필요한 항목을 가져오는 과정(가장 최근 4개 분기의 데이터를 가져와서 계산)
-    """보고서 종류에 따라 올바른 필드를 선택하여 재무 데이터를 조회합니다."""
-    fs_url = "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json"
-    params = {"crtfc_key": API_KEY, "corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code, "fs_div": "CFS"}
-    res = requests.get(fs_url, params=params).json()
-
-    if res.get('status') == '013':
-        print(f"({bsns_year}년 {reprt_code}) 연결재무제표가 없어 개별재무제표를 조회합니다.")
-        params["fs_div"] = "OFS"
-        res = requests.get(fs_url, params=params).json()
-    
-    if res.get('status') != '000':
-        print(f"API 오류: {res.get('message')} ({bsns_year}년 {reprt_code})")
-        return None
-    
-    try:
-        df = pd.DataFrame(res.get("list", []))
-        def to_numeric(series): return pd.to_numeric(series.str.replace(',', ''), errors='coerce').fillna(0)
-
-        def get_values(df, keywords, is_bs=False):
-            # 재무상태표(BS)가 아니면서, 사업보고서(ANNUAL_REPORT)가 아닌 경우 누적 필드 사용
-            if not is_bs and reprt_code != ANNUAL_REPORT:
-                th_col, fr_col = 'thstrm_add_amount', 'frmtrm_add_amount'
-            else: # 재무상태표이거나 사업보고서인 경우 기본 필드 사용
-                th_col, fr_col = 'thstrm_amount', 'frmtrm_amount'
-
-            for keyword in keywords:
-                row = df[df['account_nm'].str.strip().str.startswith(keyword)]
-                if not row.empty:
-                    thstrm = to_numeric(row[th_col]).iloc[0]
-                    frmtrm = to_numeric(row[fr_col]).iloc[0] if fr_col in row else 0
-                    return thstrm, frmtrm
-            return 0, 0
-
-        df_bs = df[df['sj_nm'] == '재무상태표']
-        df_is = df[df['sj_nm'].isin(['손익계산서', '포괄손익계산서'])]
-        df_cf = df[df['sj_nm'] == '현금흐름표']
-
-        
-        ebit_accounts = df_is['account_nm'].str.contains('영업이익|영업손실|영업손익', na=False) & \
-                                ~df_is['account_nm'].str.contains('계속|중단', na=False)
-
-
-        ebit_th = pd.to_numeric(df_is.loc[ebit_accounts, th_col]).squeeze()
-        ebit_fr = pd.to_numeric(df_is.loc[ebit_accounts, fr_col]) if fr_col in df_is.columns else 0
-        ebit_fr = ebit_fr.squeeze() if not isinstance(ebit_fr, int) else ebit_fr
-
-
-        
-        nci_th, _ = get_values(df_bs, ['비지배지분'], is_bs=True)
-        debt_th, _ = get_values(df_bs, ['부채총계'], is_bs=True)
-
-        cash_accounts = df_bs[df_bs['account_nm'].str.strip().str.startswith('현금')]
-        cash_th = to_numeric(cash_accounts['thstrm_amount']).sum()
-        
-        st_fin_accounts = df_bs[df_bs['account_nm'].str.strip().str.startswith('단기금융')]
-        st_fin_th = to_numeric(st_fin_accounts['thstrm_amount']).sum()
-        
-        data = {
-            'ebit': ebit_th, 'ebit_fr': ebit_fr,
-            'nci': nci_th,
+            'intangible_assets' : intangible_assets,
+            'nci' : nci_th,
             'total_debt': debt_th,
             'cash': cash_th + st_fin_th,
+            'interest' : interest_th
         }
+        print('data : '  , data)
+        
         return data
+        
     except Exception as e:
         print(f"데이터 처리 중 오류 발생: {e} ({bsns_year}년 {reprt_code})")
         return None
 
 
-    
 
-def calc_ev_ebit(row):
+
+def calc_ROIC_and_EV_EBIT_and_interest_coverage(row):
+    
     corp_code = row["corp_code"]
     market_cap = row["시가총액"]
 
     latest = find_latest_report(corp_code)
     if not latest:
-        return None
+        return pd.Series({"ROIC": np.nan, "EV_EBIT": np.nan, "이자보상배율" : np.nan})
 
     latest_fs = get_financial_data(corp_code, latest["bsns_year"], latest["reprt_code"])
     if not latest_fs:
-        return None
+        return pd.Series({"ROIC": np.nan, "EV_EBIT": np.nan, "이자보상배율" : np.nan})
 
+    # 🔹 연간 / 분기 공통 처리
     if latest["reprt_code"] == ANNUAL_REPORT:
-        ebit = latest_fs["ebit"]
+        ebit = latest_fs["ebit_th"]
+        tax_rate = latest_fs['tax_rate_th']
+        interest = latest_fs['interest']
+        nopat = ebit * (1-tax_rate)
+    
     else:
         last_annual = get_financial_data(corp_code, latest["bsns_year"] - 1, ANNUAL_REPORT)
         if not last_annual:
-            return None
+            return pd.Series({"ROIC": np.nan, "EV_EBIT": np.nan, "이자보상배율" : np.nan})
 
-        ebit = (
-            latest_fs["ebit"]
-            + last_annual["ebit"]
-            - latest_fs["ebit_fr"]
+        
+        last_frmtrm_interest = get_financial_data(corp_code, latest["bsns_year"] - 1, latest["reprt_code"])
+        if not last_frmtrm_interest:
+            return pd.Series({"ROIC": np.nan, "EV_EBIT": np.nan, "이자보상배율" : np.nan})
+
+
+        
+        ebit = latest_fs["ebit_th"] + last_annual["ebit_th"] - latest_fs["ebit_fr"]
+        nopat = (
+            latest_fs["ebit_th"] * (1 - latest_fs["tax_rate_th"])
+            + last_annual["ebit_th"] * (1 - last_annual["tax_rate_th"])
+            - latest_fs["ebit_fr"] * (1 - latest_fs["tax_rate_fr"])
         )
+        interest = latest_fs["interest"] + last_annual["interest"] - last_frmtrm_interest["interest"]
 
-
-    ev = market_cap + latest_fs["total_debt"] - latest_fs["cash"]
+ 
+    #  IC
     
-    if ev/ebit <= 0:
-        return None
+    ic = (
+        latest_fs["inventory"]
+        + latest_fs["accounts_receivable"]
+        - latest_fs["accounts_payable"]
+        + latest_fs["fixed_assets"]
+        + latest_fs["intangible_assets"]
+    )
+
+    if not np.isfinite(nopat) or not np.isfinite(ic) or ic <= 0:
+        roic = np.nan
+    else:
+        roic = nopat / ic
+
+    # 🔹 EV / EBIT
+    ev = market_cap + latest_fs['nci'] + latest_fs["total_debt"] - latest_fs["cash"]
+
+    if not np.isfinite(ev) or not np.isfinite(ebit) or ebit <= 0:
+        ev_ebit = np.nan
+    else:
+        ev_ebit = ev / ebit
+
+    # 🔹 이자보상배율
+
+    if interest == 0:
+        interest_coverage = 10000
     
+    elif ebit <= 0:
+        return np.nan
     
-    return ev / ebit
+    else : 
+        interest_coverage = ebit / interest
+
+
+    print(df_stock_list[df_stock_list['corp_code']==corp_code], '지표들: ',  pd.Series({
+        "ROIC": roic,
+        "EV_EBIT": ev_ebit,
+        "이자보상배율" : interest_coverage
+    }))
+
+    
+    return pd.Series({
+        "ROIC": roic,
+        "EV_EBIT": ev_ebit,
+        "이자보상배율" : interest_coverage
+    })
+
+    
 
 
 
+# ROIC, EB/EBIT, 이자보상배율 계산
 
-def build_ev_ebit_table(df_stock_list):
-    results = []
+BATCH_SIZE = 150
+SLEEP_PER_CALL = 0.3      # 종목 1개당 sleep
+SLEEP_PER_BATCH = 20     # 배치 종료 후 sleep
 
-    for _, row in df_stock_list.iterrows():
+roic_list = []
+ev_ebit_list = []
+interest_coverage_list = []
+
+for i in range(0, len(df_stock_list), BATCH_SIZE):
+    batch = df_stock_list.iloc[i:i + BATCH_SIZE]
+
+    print(f"▶ 지표 계산 중: {i} ~ {i + len(batch) - 1}")
+
+    for _, row in batch.iterrows():
         try:
-            ratio = calc_ev_ebit(row)
-            if ratio is not None:
-                results.append({
-                    "종목명": row["종목명"],
-                    "업종명": row["업종명"],
-                    "EV/EBIT": ratio
-                })
-        except:
-            continue
+            metrics = calc_ROIC_and_EV_EBIT_and_interest_coverage(row)
 
-    df_result = pd.DataFrame(results)
-    df_ev_stock_list = df_result.sort_values("EV/EBIT")
-    return df_ev_stock_list
+            roic_list.append(metrics.get("ROIC", np.nan))
+            ev_ebit_list.append(metrics.get("EV_EBIT", np.nan))
+            interest_coverage_list.append(metrics.get("이자보상배율", np.nan))
+
+        except Exception as e:
+            roic_list.append(np.nan)
+            ev_ebit_list.append(np.nan)
+            interest_coverage_list.append(np.nan)
+            print("지표 계산 실패:", row.get("corp_code"), e)
+
+        time.sleep(SLEEP_PER_CALL)
+
+    # 🔴 배치 단위 휴식 (DART 차단 방지 핵심)
+    if i + BATCH_SIZE < len(df_stock_list):
+        print("⏸ DART 보호용 휴식...")
+        time.sleep(SLEEP_PER_BATCH)
 
 
-df_ev_stock_list = build_ev_ebit_table(df_stock_list)
 
-df_stock_list = df_stock_list.merge(
-    df_ev_stock_list[['종목명','EV/EBIT']],
-    on='종목명',
-    how='right'
+df_stock_list = (
+    df_stock_list[df_stock_list["ROIC"] >= 0.1]
+    .reset_index(drop=True)
 )
 
 
 
-
-
-
-
-# 업종별 평균 계산
-industry_mean = (
+# 1️⃣ 업종별 중앙값 계산 (PER / EV·EBIT / 이자보상배율)
+industry_median = (
     df_stock_list
-    .groupby('업종명')[['PER', 'EV/EBIT']]
-    .mean()
+    .groupby('업종명')[['PER', 'EV/EBIT', '이자보상배율']]
+    .median()
     .rename(columns={
-        'PER': 'PER_mean',
-        'EV/EBIT': 'EV_EBIT_mean'
+        'PER': 'PER_median',
+        'EV/EBIT': 'EV_EBIT_median',
+        '이자보상배율': 'ICR_median'
     })
 )
 
-# 원본 df에 업종 평균 붙이기
+# 2️⃣ 원본 df에 업종 중앙값 merge
 df_merged = df_stock_list.merge(
-    industry_mean,
+    industry_median,
     on='업종명',
     how='left'
 )
 
-# 업종 평균보다 낮은 종목 제거
-df_under_price_stock_list  = df_merged[
-    (df_merged['PER'] <= df_merged['PER_mean']) &
-    (df_merged['EV/EBIT'] <= df_merged['EV_EBIT_mean'])
-].drop(columns=['PER_mean', 'EV_EBIT_mean'])
+# 3️⃣ 업종 중앙값 기준 필터링
+df_under_price_stock_list = (
+    df_merged[
+        (df_merged['PER'] <= df_merged['PER_median']) &
+        (df_merged['EV/EBIT'] <= df_merged['EV_EBIT_median']) &
+        (df_merged['이자보상배율'] >= df_merged['ICR_median'])
+    ]
+    .drop(columns=['PER_median', 'EV_EBIT_median', 'ICR_median'])
+    .reset_index(drop=True)
+)
 
-
-def get_financial_data(corp_code, bsns_year, reprt_code):
-    fs_url = "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json"
-    params = {
-        "crtfc_key": API_KEY,
-        "corp_code": corp_code,
-        "bsns_year": str(bsns_year),
-        "reprt_code": reprt_code,
-        "fs_div": "CFS"
-    }
-    res = requests.get(fs_url, params=params).json()
-
-    if res.get('status') == '013':
-        print(f"({bsns_year}년 {reprt_code}) 연결재무제표가 없어 개별재무제표 조회")
-        params["fs_div"] = "OFS"
-        res = requests.get(fs_url, params=params).json()
-
-    if res.get('status') != '000':
-        print(f"API 오류: {res.get('message')} ({bsns_year}년 {reprt_code})")
-        return None
-
-    try:
-        df = pd.DataFrame(res.get("list", []))
-
-        def to_numeric(series): 
-            return pd.to_numeric(series.str.replace(',', ''), errors='coerce').fillna(0)
-
-        def get_values(df, keywords, is_bs=False):
-            if not is_bs and reprt_code != ANNUAL_REPORT:
-                th_col, fr_col = 'thstrm_add_amount', 'frmtrm_add_amount'
-            else:
-                th_col, fr_col = 'thstrm_amount', 'frmtrm_amount'
-
-            for keyword in keywords:
-                row = df[df['account_nm'].str.strip().str.startswith(keyword)]
-                if not row.empty:
-                    thstrm = to_numeric(row[th_col]).iloc[0]
-                    frmtrm = to_numeric(row[fr_col]).iloc[0] if fr_col in row else 0
-                    return thstrm, frmtrm
-            return 0
-
-        
-        def cf_get_value(df, keywords, is_bs=False):
-            
-            th_col = 'thstrm_amount'
-        
-            for keyword in keywords:
-                row = df[df['account_nm'].str.contains(keyword)]
-                
-                if not row.empty:
-                    thstrm = to_numeric(row[th_col]).iloc[0]
-
-                    
-                    return thstrm
-        
-            return 0
-                
-
-        df_is = df[df['sj_nm'].isin(['손익계산서', '포괄손익계산서'])]
-
-        
-        ebit_accounts = df_is['account_nm'].str.contains('영업이익|영업손실|영업손익', na=False) & \
-                                ~df_is['account_nm'].str.contains('계속|중단', na=False)
-
-
-        ebit_th = pd.to_numeric(df_is.loc[ebit_accounts, th_col]).squeeze()
-        ebit_fr = pd.to_numeric(df_is.loc[ebit_accounts, fr_col]) if fr_col in df_is.columns else 0
-        ebit_fr = ebit_fr.squeeze() if not isinstance(ebit_fr, int) else ebit_fr
+print("EV/EBIT, PER, ROIC, 이자보상배율 업종 중앙값 기준 스크리닝 완료")
 
 
 
-        
-        df_cf = df[df['sj_div'] == 'CF']
-        interest_th = cf_get_value(df_cf, ['이자의 지급', '이자지급'], is_bs=False)
-        interest_th = abs(interest_th)
 
-        data = {
-            'ebit': ebit_th, 'ebit_fr': ebit_fr,
-            'interest': interest_th
-        }
-        return data
-        
-    except Exception as e:
-        print(f"데이터 처리 중 오류 발생: {e} ({bsns_year}년 {reprt_code})")
-        return None
+cols = [c for c in df_under_price_stock_list.columns if c != 'EV/EBIT'] + ['EV/EBIT']
+df_under_price_stock_list = df_under_price_stock_list[cols]
 
 
-print("EV/BBIT 및 PER 계산 완료")
+df_under_price_stock_list = (
+    df_under_price_stock_list
+    .sort_values(by=['업종명', 'EV/EBIT'], ascending=[True, True])
+    .reset_index(drop=True)
+)
 
 
+df_under_price_stock_list['티커'] = (
+    df_under_price_stock_list['티커']
+    .astype(str)
+    .str.strip()
+)
 
-# ---------------- 이자보상배율 계산 ----------------
-def calc_interest_coverage(row):
-    corp_code = row["corp_code"]
-
-    latest = find_latest_report(corp_code)
-    if not latest:
-        return None
-
-    latest_fs = get_financial_data(corp_code, latest["bsns_year"], latest["reprt_code"])
-    
-    if not latest_fs:
-        return None
-
-    if latest["reprt_code"] == ANNUAL_REPORT:
-        ebit = latest_fs["ebit"]
-        interest = latest_fs["interest"]
-    else:
-        last_annual = get_financial_data(corp_code, latest["bsns_year"] - 1, ANNUAL_REPORT)
-        last_frmtrm_interest = get_financial_data(corp_code, latest["bsns_year"] - 1, latest["reprt_code"])
-        
-        
-        if not last_frmtrm_interest:
-            return None
-        
-        if not last_annual:
-            return None
-        
-        
-        ebit = latest_fs["ebit"] + last_annual["ebit"] - latest_fs["ebit_fr"]
-        interest = latest_fs["interest"] + last_annual["interest"] - last_frmtrm_interest["interest"]
-
-    if interest == 0:
-        return 1000
-
-    elif interest <= 0 or ebit <= 0:
-        return None
-
-    return ebit / interest
+df_under_price_stock_list = df_under_price_stock_list.drop(
+    columns=['BPS', 'EPS', 'corp_code'],
+    errors='ignore'
+)
 
 
 
-# ---------------- 전체 스크리닝 (업종별 반복 처리로 변경) ----------------
-def run_screening(df_slice):
-    """주어진 업종 슬라이스에서 이자보상배율을 계산하고 업종 중위값 이상인 종목만 반환."""
-    if df_slice is None or df_slice.empty:
-        return pd.DataFrame(columns=df_slice.columns if df_slice is not None else [])
-
-    df = df_slice.copy()  # 슬라이스 복사본
-    print(f"--- 이자보상배율 계산 중: 업종 '{df['업종명'].iloc[0]}' ({len(df)}종목) ---")
-
-    # 안전하게 loc 사용하여 경고 방지
-    df.loc[:, "이자보상배율"] = df.apply(calc_interest_coverage, axis=1)
-
-    # 업종 중앙값(혹은 평균) 계산 — 원래는 median 사용
-    industry_median_ic = df["이자보상배율"].median()
-
-    # 업종 평균 이상만 반환 (None/NaN 제외)
-    df_filtered = df[(df["이자보상배율"].notna()) & (df["이자보상배율"] >= industry_median_ic)].copy()
-    return df_filtered
+print(">>> 업종별 EV/EBIT 오름차순 스크리닝 완료. 선정 종목 수:", len(df_filtered))
 
 
-# 업종 목록을 자동으로 가져와 반복 처리
-industry_list = df_under_price_stock_list['업종명'].dropna().unique()
-filtered_dfs = []
-
-print(">>> 업종별 스크리닝 시작. 업종 수:", len(industry_list))
-for ind in industry_list:
-    slice_df = df_under_price_stock_list[df_under_price_stock_list['업종명'] == ind]
-    screened = run_screening(slice_df)
-    if (screened is not None) and (not screened.empty):
-        filtered_dfs.append(screened)
-
-# 결과 합치기
-if filtered_dfs:
-    df_filtered = pd.concat(filtered_dfs, axis=0, ignore_index=True)
-else:
-    df_filtered = pd.DataFrame(columns=df_under_price_stock_list.columns)
-
-print(">>> 업종별 스크리닝 완료. 선정 종목 수:", len(df_filtered))
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
@@ -780,7 +639,7 @@ worksheet.clear()
 
 set_with_dataframe(
     worksheet,
-    df_filtered,
+    df_under_price_stock_list,
     include_index=False,
     include_column_header=True
 )
