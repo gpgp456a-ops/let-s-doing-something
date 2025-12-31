@@ -613,7 +613,7 @@ df_under_price_stock_list = df_under_price_stock_list.drop(
 
 
 
-print(">>> 업종별 EV/EBIT 오름차순 스크리닝 완료. 선정 종목 수:", len(df_filtered))
+print(">>> 업종별 EV/EBIT 오름차순 스크리닝 완료. 선정 종목 수:", len(df_under_price_stock_list))
 
 
 SCOPES = [
