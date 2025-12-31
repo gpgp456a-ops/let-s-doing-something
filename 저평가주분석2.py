@@ -550,6 +550,7 @@ df_stock_list['EV/EBIT'] = ev_ebit_list
 df_stock_list['이자보상배율'] = interest_coverage_list
 
 
+df_stock_list = df_stock_list.dropna(subset=['ROIC', 'EV/EBIT', '이자보상배율']).reset_index(drop=True)
 
 
 df_undervalued_stock_list = (
@@ -561,7 +562,7 @@ df_undervalued_stock_list = (
 
 # 1️⃣ 업종별 중앙값 계산 (PER / EV·EBIT / 이자보상배율)
 industry_median = (
-    df_stock_list
+    df_undervalued_stock_list
     .groupby('업종명')[['PER', 'EV/EBIT', '이자보상배율']]
     .median()
     .rename(columns={
@@ -572,7 +573,7 @@ industry_median = (
 )
 
 # 2️⃣ 원본 df에 업종 중앙값 merge
-df_merged = df_stock_list.merge(
+df_merged = df_undervalued_stock_list.merge(
     industry_median,
     on='업종명',
     how='left'
