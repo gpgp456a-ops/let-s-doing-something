@@ -580,7 +580,7 @@ df_merged = df_stock_list.merge(
 )
 
 # 3️⃣ 업종 중앙값 기준 필터링
-df_under_price_stock_list = (
+df_undervalued_stock_list = (
     df_merged[
         (df_merged['PER'] <= df_merged['PER_median']) &
         (df_merged['EV/EBIT'] <= df_merged['EV_EBIT_median']) &
@@ -595,31 +595,31 @@ print("EV/EBIT, PER, ROIC, 이자보상배율 업종 중앙값 기준 스크리�
 
 
 
-cols = [c for c in df_under_price_stock_list.columns if c != 'EV/EBIT'] + ['EV/EBIT']
-df_under_price_stock_list = df_under_price_stock_list[cols]
+cols = [c for c in df_undervalued_stock_list.columns if c != 'EV/EBIT'] + ['EV/EBIT']
+df_undervalued_stock_list = df_undervalued_stock_list[cols]
 
 
-df_under_price_stock_list = (
-    df_under_price_stock_list
+df_undervalued_stock_list = (
+    df_undervalued_stock_list
     .sort_values(by=['업종명', 'EV/EBIT'], ascending=[True, True])
     .reset_index(drop=True)
 )
 
 
-df_under_price_stock_list['티커'] = (
-    df_under_price_stock_list['티커']
+df_undervalued_stock_list['티커'] = (
+    df_undervalued_stock_list['티커']
     .astype(str)
     .str.strip()
 )
 
-df_under_price_stock_list = df_under_price_stock_list.drop(
+df_undervalued_stock_list = df_undervalued_stock_list.drop(
     columns=['BPS', 'EPS', 'corp_code'],
     errors='ignore'
 )
 
 
 
-print(">>> 업종별 EV/EBIT 오름차순 스크리닝 완료. 선정 종목 수:", len(df_under_price_stock_list))
+print(">>> 업종별 EV/EBIT 오름차순 스크리닝 완료. 선정 종목 수:", len(df_undervalued_stock_list))
 
 
 SCOPES = [
@@ -641,7 +641,7 @@ worksheet.clear()
 
 set_with_dataframe(
     worksheet,
-    df_under_price_stock_list,
+    df_undervalued_stock_list,
     include_index=False,
     include_column_header=True
 )
