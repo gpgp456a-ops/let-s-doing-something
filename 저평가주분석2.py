@@ -339,7 +339,7 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
             mask = df_bs['account_nm'].str.contains(keyword, na=False) & \
                    ~df_bs['account_nm'].str.contains('감가', na=False)
             
-            th_series = pd.to_numeric(df_bs.loc[mask, 'thstrm_amount'], errors='coerce')
+            th_series = pd.to_numeric(df_bs.loc[mask, 'thstrm_amount'].sum(), errors='coerce')
             
             if th_series.empty:
                 results[var_name] = 0
@@ -547,7 +547,7 @@ for i in range(0, len(df_stock_list), BATCH_SIZE):
 
 
 df_stock_list['ROIC'] = roic_list
-df_stock_list['EV_EBIT'] = ev_ebit_list
+df_stock_list['EV/EBIT'] = ev_ebit_list
 df_stock_list['이자보상배율'] = interest_coverage_list
 
 
