@@ -497,11 +497,6 @@ def calc_ROIC_and_EV_EBIT_and_interest_coverage(row):
         interest_coverage = ebit / interest
 
 
-    print(df_stock_list[df_stock_list['corp_code']==corp_code], '지표들: ',  pd.Series({
-        "ROIC": roic,
-        "EV_EBIT": ev_ebit,
-        "이자보상배율" : interest_coverage
-    }))
 
     
     return pd.Series({
