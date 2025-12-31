@@ -339,7 +339,7 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
             mask = df_bs['account_nm'].str.contains(keyword, na=False) & \
                    ~df_bs['account_nm'].str.contains('감가', na=False)
             
-            th_series = pd.to_numeric(df_bs.loc[mask, 'thstrm_amount'].sum(), errors='coerce')
+            th_series = pd.to_numeric(df_bs.loc[mask, 'thstrm_amount'], errors='coerce').sum()
             
             if th_series.empty:
                 results[var_name] = 0
