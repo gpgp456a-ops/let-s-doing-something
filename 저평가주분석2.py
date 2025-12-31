@@ -410,7 +410,6 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
             'cash': cash_th + st_fin_th,
             'interest' : interest_th
         }
-        print('data : '  , data)
         
         return data
         
