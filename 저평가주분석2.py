@@ -553,7 +553,7 @@ df_stock_list['이자보상배율'] = interest_coverage_list
 
 
 
-df_stock_list = (
+df_undervalued_stock_list = (
     df_stock_list[df_stock_list["ROIC"] >= 0.1]
     .reset_index(drop=True)
 )
