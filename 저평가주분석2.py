@@ -40,7 +40,7 @@ today = df.index[-1]
 
 
 # 전체 종목 리스트
-tickers = stock.get_market_ticker_list(market="ALL")
+tickers = stock.get_market_ticker_list(todaay, market="ALL")
 
 # 업종 정보
 KOSPI_sector_df = stock.get_market_sector_classifications(today, market = 'KOSPI')
