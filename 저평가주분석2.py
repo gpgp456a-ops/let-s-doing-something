@@ -41,8 +41,8 @@ def get_latest_trading_day():
 
     raise RuntimeError("최근 거래일을 찾을 수 없습니다")
 
-today = get_latest_trading_day()
-
+#today = get_latest_trading_day()
+today = '2026-01-02
 # 전체 종목 리스트
 tickers = stock.get_market_ticker_list(market="ALL")
 
