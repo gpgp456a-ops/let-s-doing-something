@@ -25,7 +25,21 @@ with open(SERVICE_ACCOUNT_FILE, "w", encoding="utf-8") as f:
     f.write(service_account_json)
 
 
-today = stock.get_nearest_business_day_in_a_week()
+def get_latest_trading_day():
+    today = datetime.today()
+    
+    for i in range(0, 10):  # 최근 10일 안에서 탐색
+        date = (today - timedelta(days=i)).strftime("%Y%m%d")
+        try:
+            df = stock.get_index_ohlcv(date, date, "1001")  # KOSPI 지수
+            if not df.empty:
+                return date
+        except:
+            continue
+
+    raise RuntimeError("최근 거래일을 찾을 수 없습니다")
+
+today = get_latest_trading_day()
 
 # 전체 종목 리스트
 tickers = stock.get_market_ticker_list(market="ALL")
