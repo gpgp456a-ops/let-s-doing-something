@@ -27,22 +27,18 @@ with open(SERVICE_ACCOUNT_FILE, "w", encoding="utf-8") as f:
     f.write(service_account_json)
 
 
-def get_latest_trading_day():
-    today = datetime.today()
-    
-    for i in range(0, 10):  # 최근 10일 안에서 탐색
-        date = (today - timedelta(days=i)).strftime("%Y%m%d")
-        try:
-            df = stock.get_index_ohlcv(date, date, "1001")  # KOSPI 지수
-            if not df.empty:
-                return date
-        except:
-            continue
+# 종료 날짜를 오늘로 설정
+to_date = datetime.today().strftime("%Y%m%d")
+# 시작 날짜를 넉넉하게 설정 (예: 한 달 전)
+from_date = (datetime.today() - timedelta(days=30)).strftime("%Y%m%d")
 
-    raise RuntimeError("최근 거래일을 찾을 수 없습니다")
+# 삼성전자 종목의 최근 한 달간 데이터 조회
+df = stock.get_market_ohlcv_by_date(from_date, to_date, "005930")
 
-#today = get_latest_trading_day()
-today = '2026-01-02
+# 데이터프레임의 마지막 인덱스(날짜)가 가장 최근 거래일
+today = df.index[-1]
+
+
 # 전체 종목 리스트
 tickers = stock.get_market_ticker_list(market="ALL")
 
