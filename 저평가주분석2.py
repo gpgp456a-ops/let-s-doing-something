@@ -8,7 +8,6 @@ import json
 import io
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, date
-import pykrx
 import patch_pykrx
 from pykrx import stock
 import gspread
