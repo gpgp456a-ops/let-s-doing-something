@@ -26,8 +26,8 @@ jobs:
         run: |
           PYKRX_PATH=$(python -c "import pykrx, os; print(os.path.dirname(pykrx.__file__))")
           echo "pykrx installed at: $PYKRX_PATH"
-          cp patch_pykrx/weibo.py $PYKRX_PATH/website/weibo.py
-          echo "Patched weibo.py applied."
+          cp patch_pykrx/webio.py $PYKRX_PATH/website/webio.py
+          echo "Patched webio.py applied."
 
       - name: Run upload script
         env:
