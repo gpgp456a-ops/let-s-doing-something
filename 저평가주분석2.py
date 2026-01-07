@@ -8,7 +8,7 @@ import json
 import io
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, date
-import patch_pykrx
+import patch_requests
 from pykrx import stock
 import gspread
 from google.oauth2.service_account import Credentials
