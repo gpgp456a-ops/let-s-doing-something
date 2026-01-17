@@ -571,26 +571,27 @@ df_undervalued_stock_list = (
 
 
 
-# 1️⃣ 업종별 중앙값 계산 (PER / EV·EBIT / 이자보상배율)
+# 1️⃣ 시장 + 업종별 중앙값 계산
 industry_median = (
     df_undervalued_stock_list
-    .groupby('업종명')[['PER', 'EV/EBIT', '이자보상배율']]
+    .groupby(['시장', '업종명'])[['PER', 'EV/EBIT', '이자보상배율']]
     .median()
     .rename(columns={
         'PER': 'PER_median',
         'EV/EBIT': 'EV_EBIT_median',
         '이자보상배율': 'ICR_median'
     })
+    .reset_index()
 )
 
-# 2️⃣ 원본 df에 업종 중앙값 merge
+# 2️⃣ 원본 df와 merge
 df_merged = df_undervalued_stock_list.merge(
     industry_median,
-    on='업종명',
+    on=['시장', '업종명'],
     how='left'
 )
 
-# 3️⃣ 업종 중앙값 기준 필터링
+# 3️⃣ 업종 + 시장 중앙값 기준 스크리닝
 df_undervalued_stock_list = (
     df_merged[
         (df_merged['PER'] <= df_merged['PER_median']) &
@@ -601,7 +602,6 @@ df_undervalued_stock_list = (
     .reset_index(drop=True)
 )
 
-print("EV/EBIT, PER, ROIC, 이자보상배율 업종 중앙값 기준 스크리닝 완료")
 
 
 
@@ -646,15 +646,36 @@ creds = Credentials.from_service_account_file(
 gc = gspread.authorize(creds)
 
 spreadsheet = gc.open_by_key(SPREADSHEET_ID)
-worksheet = spreadsheet.get_worksheet(0)  \
 
-worksheet.clear()
+# 1️⃣ 시트 가져오기: 0번(KOSPI), 1번(KOSDAQ)
+worksheet_kospi = spreadsheet.get_worksheet(0)
+worksheet_kosdaq = spreadsheet.get_worksheet(1)
 
+# 2️⃣ 시장별로 df 분리
+df_kospi = df_undervalued_stock_list[df_undervalued_stock_list['시장'] == 'KOSPI']
+df_kosdaq = df_undervalued_stock_list[df_undervalued_stock_list['시장'] == 'KOSDAQ']
+
+# 3️⃣ 기존 내용 초기화
+worksheet_kospi.clear()
+worksheet_kosdaq.clear()
+
+# 4️⃣ KOSPI 저장
 set_with_dataframe(
-    worksheet,
-    df_undervalued_stock_list,
+    worksheet_kospi,
+    df_kospi,
     include_index=False,
     include_column_header=True
 )
+
+# 5️⃣ KOSDAQ 저장
+set_with_dataframe(
+    worksheet_kosdaq,
+    df_kosdaq,
+    include_index=False,
+    include_column_header=True
+)
+
+
+print("KOSPI → Sheet1 / KOSDAQ → Sheet2 저장 완료")
 
 os.remove(SERVICE_ACCOUNT_FILE)
