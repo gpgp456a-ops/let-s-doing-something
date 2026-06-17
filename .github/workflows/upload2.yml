@@ -27,5 +27,8 @@ jobs:
           API_KEY: ${{ secrets.API_KEY }}
           SERVICE_ACCOUNT_FILE: ${{ secrets.SERVICE_ACCOUNT_FILE }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
         run: |
           python 저평가주분석2.py
+
