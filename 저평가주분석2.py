@@ -15,6 +15,8 @@ from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
 import time
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
+from requests.adapters import HTTPAdapter
 
 
 API_KEY = os.environ["API_KEY"]
@@ -23,8 +25,7 @@ service_account_json = os.environ["SERVICE_ACCOUNT_FILE"]
 KRX_ID = os.environ["KRX_ID"]
 KRX_PW = os.environ["KRX_PW"]
 
-
-# 서비스계정 JSON을 임시 파일로 생성 (종료 시 삭제)
+# 서비스계정 JSON을 임시 파일로 생성
 SERVICE_ACCOUNT_FILE = "service_account.json"
 with open(SERVICE_ACCOUNT_FILE, "w", encoding="utf-8") as f:
     f.write(service_account_json)
@@ -35,25 +36,29 @@ HALF_REPORT   = "11012"
 Q1_REPORT     = "11013"
 Q3_REPORT     = "11014"
 
-# 무차입(이자=0) 기업용 이자보상배율 표시값 (업종 중앙값 계산에서는 제외)
-ICR_SENTINEL = 10000
+ICR_SENTINEL = 10000      # 무차입(이자=0) 표시값 (업종 중앙값 계산에선 제외)
+MAX_WORKERS  = 8          # 동시 조회 수 (10053 잦으면 6으로, 빠르면 10~12로)
 
-# DART 호출 간격 (재시도 로직이 끊김을 흡수하므로 0. 10053이 자주 나면 0.1~0.3로)
-SLEEP_PER_CALL = 0
-SLEEP_PER_BATCH = 0
-BATCH_SIZE = 150
+# DART용 세션 (연결 재사용 → 속도/안정성 향상)
+session = requests.Session()
+session.mount("https://", HTTPAdapter(pool_connections=MAX_WORKERS * 2,
+                                      pool_maxsize=MAX_WORKERS * 2, max_retries=0))
 
 
 # ===== 공통 숫자 파서 (DART 금액은 "1,234,567" 형태라 콤마 제거 필수) =====
 def to_num(series):
     return pd.to_numeric(series.astype(str).str.replace(',', '', regex=False), errors='coerce')
 
-def first_or_zero(series):
-    s = to_num(series).dropna()
+def first_val(frame, col):
+    if col not in frame.columns or frame.empty:
+        return 0.0
+    s = to_num(frame[col]).dropna()
     return float(s.iloc[0]) if not s.empty else 0.0
 
-def sum_or_zero(series):
-    return float(to_num(series).sum())
+def sum_val(frame, col):
+    if col not in frame.columns or frame.empty:
+        return 0.0
+    return float(to_num(frame[col]).sum())
 
 
 def dart_get(url, params, retries=4):
@@ -61,7 +66,7 @@ def dart_get(url, params, retries=4):
     last_err = None
     for attempt in range(retries):
         try:
-            return requests.get(url, params=params, timeout=20).json()
+            return session.get(url, params=params, timeout=20).json()
         except Exception as e:
             last_err = e
             time.sleep(2 * (attempt + 1))
@@ -69,7 +74,7 @@ def dart_get(url, params, retries=4):
     return {}
 
 
-# ===== 1. 기준일 / 업종 / 종목 =====
+# ===== 1. 기준일 / 업종 =====
 to_date = datetime.today().strftime("%Y%m%d")
 from_date = (datetime.today() - timedelta(days=30)).strftime("%Y%m%d")
 
@@ -142,7 +147,7 @@ def get_stock_lists():
 
 # ===== 2. DART 고유번호 =====
 def get_dart_corp_df():
-    res = requests.get("https://opendart.fss.or.kr/api/corpCode.xml", params={"crtfc_key": API_KEY})
+    res = session.get("https://opendart.fss.or.kr/api/corpCode.xml", params={"crtfc_key": API_KEY})
     res.raise_for_status()
     with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
         xml_data = zf.read(zf.namelist()[0])
@@ -205,36 +210,38 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
             th_col, fr_col = 'thstrm_amount', 'frmtrm_amount'
         else:
             th_col, fr_col = 'thstrm_add_amount', 'frmtrm_add_amount'
-        if th_col not in df.columns: th_col = 'thstrm_amount'
-        if fr_col not in df.columns: fr_col = 'frmtrm_amount'
 
         df_is = df[df['sj_nm'].isin(['손익계산서', '포괄손익계산서'])]
         df_bs = df[df['sj_nm'].isin(['재무상태표', '연결재무상태표'])]
         df_cf = df[df['sj_div'] == 'CF']
 
+        # 영업이익(EBIT)
         ebit_mask = df_is['account_nm'].str.contains('영업이익|영업손실|영업손익', na=False) & \
                     ~df_is['account_nm'].str.contains('계속|중단|기타', na=False)
-        ebit_th = first_or_zero(df_is.loc[ebit_mask, th_col])
-        ebit_fr = first_or_zero(df_is.loc[ebit_mask, fr_col])
+        ebit_th = first_val(df_is.loc[ebit_mask], th_col)
+        ebit_fr = first_val(df_is.loc[ebit_mask], fr_col)
 
+        # 법인세차감전순이익(EBT)
         ebt_mask = df_is['account_nm'].str.contains('법인세', na=False) & \
                    df_is['account_nm'].str.contains('차감전', na=False)
-        ebt_th = first_or_zero(df_is.loc[ebt_mask, th_col])
-        ebt_fr = first_or_zero(df_is.loc[ebt_mask, fr_col])
+        ebt_th = first_val(df_is.loc[ebt_mask], th_col)
+        ebt_fr = first_val(df_is.loc[ebt_mask], fr_col)
 
+        # 법인세비용 (EBT 행 제외)
         df_is_tax = df_is.loc[~ebt_mask]
         tax_mask = df_is_tax['account_nm'].str.contains('법인세비용', na=False) & \
                    ~df_is_tax['account_nm'].str.contains('기타', na=False)
-        tax_th = abs(sum_or_zero(df_is_tax.loc[tax_mask, th_col]))
-        tax_fr = abs(sum_or_zero(df_is_tax.loc[tax_mask, fr_col]))
+        tax_th = abs(sum_val(df_is_tax.loc[tax_mask], th_col))
+        tax_fr = abs(sum_val(df_is_tax.loc[tax_mask], fr_col))
 
         tax_rate_th = tax_th / ebt_th if ebt_th else 0.0
         tax_rate_fr = tax_fr / ebt_fr if ebt_fr else 0.0
 
+        # 투하자본(IC) 구성요소 (재무상태표 시점값)
         def bs_sum(keyword):
             mask = df_bs['account_nm'].str.contains(keyword, na=False) & \
                    ~df_bs['account_nm'].str.contains('감가', na=False)
-            return sum_or_zero(df_bs.loc[mask, 'thstrm_amount'])
+            return sum_val(df_bs.loc[mask], 'thstrm_amount')
 
         inventory           = bs_sum('재고자산')
         accounts_receivable = bs_sum('매출채권')
@@ -242,14 +249,16 @@ def get_financial_data(corp_code, bsns_year, reprt_code):
         fixed_assets        = bs_sum('유형자산')
         intangible_assets   = bs_sum('무형자산')
 
-        nci    = sum_or_zero(df_bs.loc[df_bs['account_nm'].str.contains('비지배지분', na=False), 'thstrm_amount'])
-        debt   = sum_or_zero(df_bs.loc[df_bs['account_nm'].str.contains('부채총계', na=False), 'thstrm_amount'])
-        cash   = sum_or_zero(df_bs.loc[df_bs['account_nm'].str.contains('현금', na=False), 'thstrm_amount'])
-        st_fin = sum_or_zero(df_bs.loc[df_bs['account_nm'].str.contains('단기금융', na=False), 'thstrm_amount'])
+        # EV 구성요소
+        nci    = sum_val(df_bs.loc[df_bs['account_nm'].str.contains('비지배지분', na=False)], 'thstrm_amount')
+        debt   = sum_val(df_bs.loc[df_bs['account_nm'].str.contains('부채총계', na=False)], 'thstrm_amount')
+        cash   = sum_val(df_bs.loc[df_bs['account_nm'].str.contains('현금', na=False)], 'thstrm_amount')
+        st_fin = sum_val(df_bs.loc[df_bs['account_nm'].str.contains('단기금융', na=False)], 'thstrm_amount')
 
-        interest = abs(sum_or_zero(df_cf.loc[
+        # 이자비용(지급) - 현금흐름표
+        interest = abs(sum_val(df_cf.loc[
             df_cf['account_nm'].str.contains('이자', na=False) &
-            df_cf['account_nm'].str.contains('지급', na=False), 'thstrm_amount']))
+            df_cf['account_nm'].str.contains('지급', na=False)], 'thstrm_amount'))
 
         return {
             'ebit_th': ebit_th, 'ebit_fr': ebit_fr,
@@ -312,6 +321,14 @@ def calc_metrics(row):
     return pd.Series({"ROIC": roic, "EV_EBIT": ev_ebit, "이자보상배율": icr})
 
 
+def safe_calc(row):
+    try:
+        return calc_metrics(row)
+    except Exception as e:
+        print("지표 계산 실패:", row.get("corp_code"), e)
+        return pd.Series({"ROIC": np.nan, "EV_EBIT": np.nan, "이자보상배율": np.nan})
+
+
 # ===== 메인 =====
 def main():
     df_stock_list, _ = get_stock_lists()
@@ -328,27 +345,17 @@ def main():
     valid_per = df_stock_list[df_stock_list['PER'].notna() & (df_stock_list['PER'] != 0)]
     df_stock_list = df_stock_list[df_stock_list['종목명'].isin(valid_per['종목명'])].reset_index(drop=True)
 
-    roic_list, ev_ebit_list, icr_list = [], [], []
-    for i in range(0, len(df_stock_list), BATCH_SIZE):
-        batch = df_stock_list.iloc[i:i + BATCH_SIZE]
-        print(f"▶ 지표 계산 중: {i} ~ {i + len(batch) - 1} / {len(df_stock_list)}")
-        for _, row in batch.iterrows():
-            try:
-                m = calc_metrics(row)
-                roic_list.append(m["ROIC"])
-                ev_ebit_list.append(m["EV_EBIT"])
-                icr_list.append(m["이자보상배율"])
-            except Exception as e:
-                roic_list.append(np.nan); ev_ebit_list.append(np.nan); icr_list.append(np.nan)
-                print("지표 계산 실패:", row.get("corp_code"), e)
-            if SLEEP_PER_CALL:
-                time.sleep(SLEEP_PER_CALL)
-        if SLEEP_PER_BATCH and i + BATCH_SIZE < len(df_stock_list):
-            time.sleep(SLEEP_PER_BATCH)
+    # --- 지표 계산 (병렬) ---
+    rows = [row for _, row in df_stock_list.iterrows()]
+    print(f"▶ 지표 계산 시작: {len(rows)}종목 (병렬 {MAX_WORKERS})")
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        results = list(ex.map(safe_calc, rows))   # 순서 보존
 
-    df_stock_list['ROIC'] = roic_list
-    df_stock_list['EV/EBIT'] = ev_ebit_list
-    df_stock_list['이자보상배율'] = icr_list
+    metrics_df = pd.DataFrame(list(results))
+    df_stock_list['ROIC'] = metrics_df['ROIC'].values
+    df_stock_list['EV/EBIT'] = metrics_df['EV_EBIT'].values
+    df_stock_list['이자보상배율'] = metrics_df['이자보상배율'].values
+
     df_stock_list = df_stock_list.dropna(subset=['ROIC', 'EV/EBIT', '이자보상배율']).reset_index(drop=True)
 
     df = df_stock_list[df_stock_list["ROIC"] >= 0.1].reset_index(drop=True)
@@ -400,9 +407,3 @@ if __name__ == "__main__":
     finally:
         if os.path.exists(SERVICE_ACCOUNT_FILE):
             os.remove(SERVICE_ACCOUNT_FILE)
-
-
-
-print("KOSPI → Sheet1 / KOSDAQ → Sheet2 저장 완료")
-
-os.remove(SERVICE_ACCOUNT_FILE)
